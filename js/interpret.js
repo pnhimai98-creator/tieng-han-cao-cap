@@ -15,10 +15,36 @@ const fmtS=s=>s==null?"":Math.floor(s/60)+":"+(s%60).toFixed(1).padStart(4,"0");
 const hasSrc=it=>!!(it&&(it.youtube||it.audio));
 const arr=x=>Array.isArray(x)?x:[];
 const parseClock=v=>{v=String(v||"").trim();if(!v)return null;const p=v.split(":").map(Number);if(p.some(isNaN))return null;return p.reduce((a,b)=>a*60+b,0)};
-function callVideo(ytv,from,to){const fd={file_data:{file_uri:"https://www.youtube.com/watch?v="+ytv}};
- if(from!=null||to!=null){fd.video_metadata={};if(from!=null)fd.video_metadata.start_offset=from+"s";if(to!=null)fd.video_metadata.end_offset=to+"s"}
+/* ---- gửi video cho Gemini ở chế độ "nhẹ": hình độ phân giải thấp, 1 khung hình / 2 giây
+   (chép lời chỉ cần tiếng) → ít dữ liệu hơn, ít bị 503 hơn. Nếu mô hình không nhận tùy chọn này thì gửi lại kiểu thường. */
+let LIGHT=true;
+async function callVideo(ytv,from,to){
  const range=(from!=null||to!=null)?`${fmtS(from||0)} – ${to!=null?fmtS(to):"hết video"}`:"";
- return P.gemini([fd,{text:P.gemVideoPrompt(range)}],{json:true,timeout:300000})}
+ const make=light=>{const fd={file_data:{file_uri:"https://www.youtube.com/watch?v="+ytv}},vm={};
+  if(from!=null)vm.start_offset=Math.floor(from)+"s";if(to!=null)vm.end_offset=Math.ceil(to)+"s";if(light)vm.fps=0.5;
+  if(Object.keys(vm).length)fd.video_metadata=vm;return [fd,{text:P.gemVideoPrompt(range)}]};
+ try{return await P.gemini(make(LIGHT),{json:true,timeout:300000,lowMedia:LIGHT})}
+ catch(e){if(LIGHT&&/fps|media_resolution|mediaResolution|video_metadata|invalid argument/i.test(e.message)){LIGHT=false;return P.gemini(make(false),{json:true,timeout:300000})}throw e}}
+/* ---- chia đoạn dài thành các phần ≤ 2 phút, gọi lần lượt, ghép kết quả ---- */
+const CHUNK=120;
+function splitRange(from,to){if(from==null||to==null||to-from<=CHUNK+30)return [[from,to]];const out=[];for(let a=from;a<to;a+=CHUNK)out.push([a,Math.min(to,a+CHUNK)]);
+ if(out.length>1&&out[out.length-1][1]-out[out.length-1][0]<30){const l=out.pop();out[out.length-1][1]=l[1]}return out}
+function mergeInto(base,o,segs){const lastEnd=base.segments.length?base.segments[base.segments.length-1].end:-1;
+ segs.filter(x=>x.start>=lastEnd-1||!base.segments.length).forEach(x=>base.segments.push(x));
+ base.segments.sort((a,b)=>a.start-b.start);
+ const vk=new Set(base.vocab.map(v=>v.ko)),gk=new Set(base.grammar.map(g=>g.f));
+ arr(o.vocab).forEach(v=>{if(v&&v.ko&&!vk.has(v.ko)){vk.add(v.ko);base.vocab.push(v)}});
+ arr(o.grammar).forEach(g=>{if(g&&g.f&&!gk.has(g.f)){gk.add(g.f);base.grammar.push(g)}});
+ arr(o.notes).forEach(n=>{if(n&&!base.notes.includes(n))base.notes.push(n)});
+ if(!base.title&&o.title)base.title=String(o.title).trim();if(!base.kind&&o.kind)base.kind=o.kind==="news"?"news":"daily"}
+/* chạy lần lượt các phần; phần lỗi được ghi vào base.pending để thử lại sau */
+async function runChunks(ytv,parts,base,btn){const failed=[];let lastErr=null;
+ for(let i=0;i<parts.length;i++){const [a,b]=parts[i];
+  if(btn&&btn.isConnected)btn.innerHTML=`⏳ Gemini đang nghe${parts.length>1?` phần ${i+1}/${parts.length}`:""} (${fmtS(a||0)}${b!=null?" – "+fmtS(b):""})…`;
+  try{const o=await callVideo(ytv,a,b);const segs=P.gemToSegments(o,a||0);if(!segs.length)throw new Error("Gemini không chép được lời nào ở đoạn này.");mergeInto(base,o,segs)}
+  catch(e){lastErr=e;failed.push([a,b]);if(!/quá tải|503|500|502|504|429|hết lượt|xử lý quá lâu|JSON lỗi|không chép được|không trả nội dung/i.test(e.message))throw e}}
+ base.pending=failed;return lastErr}
+const pendingNote=it=>it.pending&&it.pending.length?`<div class="note warn" style="margin-bottom:12px">Còn ${it.pending.length} phần Gemini chưa xử lý được (${it.pending.map(r=>fmtS(r[0]||0)+"–"+(r[1]!=null?fmtS(r[1]):"hết")).join(", ")}) do máy chủ quá tải. <button class="btn sm pri" data-act="ipgemfix">✨ Thử lại phần lỗi</button></div>`:"";
 const isAudioURL=u=>/^https?:\/\/.+\.(mp3|m4a|aac|ogg|oga|wav|opus)(\?|#|$)/i.test(u);
 
 /* =====================================================================
@@ -139,7 +165,7 @@ function sumBody(it){const noKo=!it.segments.some(x=>x.ko);
  <section class="card" style="margin-top:14px"><div class="row"><button class="btn" data-act="ipcopyjson">Chép JSON cả bài (để đưa lên GitHub)</button></div>
   <details class="small" style="margin-top:8px"><summary>Dán JSON tổng hợp thủ công</summary><textarea id="ip-sumjson" rows="5" style="margin-top:8px" aria-label="JSON tổng hợp" placeholder='{"segments_vi":[…],"vocab":[…],"grammar":[…]}'></textarea>
   <div class="row" style="margin-top:8px"><button class="btn" data-act="ipsumimp">Thêm vào bài</button></div></details></section>`}
-function body(it){return U.ipTab==="shadow"?shadowBody(it):U.ipTab==="sum"?sumBody(it):U.ipTab==="mark"?markBody(it):consBody(it)}
+function body(it){return pendingNote(it)+(U.ipTab==="shadow"?shadowBody(it):U.ipTab==="sum"?sumBody(it):U.ipTab==="mark"?markBody(it):consBody(it))}
 function player(it){if(it.youtube)return `<div class="yt"><div id="ytp"></div></div>`;
  if(it.audio)return `<audio id="aup" controls preload="metadata" src="${esc(it.audio)}" style="width:100%;max-width:720px"></audio>`;
  return `<div class="note warn">Bài này chưa có nguồn âm thanh gốc. Thêm trường <code>youtube</code> hoặc <code>audio</code> trong dữ liệu, hoặc tạo lại bài với link nguồn.</div>`}
@@ -246,21 +272,31 @@ Object.assign(A,{
  ipgem:el=>{const link=$("#ni-link").value.trim(),ytv=P.ytId(link);
   if(!ytv){toast(isAudioURL(link)?"Gemini chỉ nhận link YouTube. Với file âm thanh hãy dùng “Tạo thủ công”.":"Hãy dán link YouTube.");return}
   if(!P.gemOK()){P.gemSettings();return}
-  const from=parseClock($("#ni-from").value),to=parseClock($("#ni-to").value);
+  let from=parseClock($("#ni-from").value),to=parseClock($("#ni-to").value);
   if(to!=null&&from!=null&&to<=from){toast("Thời điểm kết thúc phải sau thời điểm bắt đầu.");return}
+  if(to!=null&&from==null)from=0;
+  if(to==null)toast("Mẹo: nhập cả “đến” (ví dụ 3:00) để web chia nhỏ và Gemini ít bị quá tải.");
   const meta={title:$("#ni-title").value.trim(),kind:$("#ni-kind").value,source:$("#ni-src").value.trim()};
-  P.busy(el,"Gemini đang nghe video… (30 giây – vài phút)",async()=>{const o=await callVideo(ytv,from,to);const segs=P.gemToSegments(o,from||0);
-   if(!segs.length)throw new Error("Gemini không chép được lời nào. Thử đoạn khác hoặc video khác.");
-   const it={id:"my-i"+Date.now().toString(36),kind:meta.kind||(o.kind==="news"?"news":"daily"),source:meta.source||"YouTube",url:"https://www.youtube.com/watch?v="+ytv,youtube:ytv,audio:"",date:today(),
-    title:meta.title||String(o.title||"").trim()||"Bài phiên dịch "+today(),segments:segs,notes:arr(o.notes),vocab:arr(o.vocab),grammar:arr(o.grammar),by:"gemini"};
-   S.lib.ip.push(it);save();P.refreshLibrary();U.ip=it.id;U.ipPos=0;U.ipShow=false;U.ipTab="cons";P.render();window.scrollTo(0,0);
-   toast(`Gemini đã soạn ${segs.length} đoạn, ${it.vocab.length} từ, ${it.grammar.length} cấu trúc.`)})},
+  const base={id:"my-i"+Date.now().toString(36),kind:meta.kind,source:meta.source||"YouTube",url:"https://www.youtube.com/watch?v="+ytv,youtube:ytv,audio:"",date:today(),title:meta.title,segments:[],notes:[],vocab:[],grammar:[],by:"gemini"};
+  P.busy(el,"Gemini đang nghe video…",async()=>{const err=await runChunks(ytv,splitRange(from,to),base,el);
+   if(!base.segments.length)throw err||new Error("Gemini không chép được lời nào. Thử đoạn khác hoặc video khác.");
+   base.kind=base.kind||"daily";base.title=base.title||"Bài phiên dịch "+today();
+   S.lib.ip.push(base);save();P.refreshLibrary();U.ip=base.id;U.ipPos=0;U.ipShow=false;U.ipTab="cons";P.render();window.scrollTo(0,0);
+   toast(base.pending.length?`Đã soạn ${base.segments.length} đoạn; còn ${base.pending.length} phần lỗi — bấm “Thử lại phần lỗi”.`:`Gemini đã soạn ${base.segments.length} đoạn, ${base.vocab.length} từ, ${base.grammar.length} cấu trúc.`)})},
  ipgemre:el=>{const it=cur();if(!P.gemOK()){P.gemSettings();return}
   const go2=()=>P.busy(el,"Gemini đang nghe video…",async()=>{const T=timed(it);const from=T.length?Math.max(0,Math.floor(T[0].start)):null,to=T.length?Math.ceil(T[T.length-1].end):null;
-   const o=await callVideo(it.youtube,from,to);const segs=P.gemToSegments(o,from||0);if(!segs.length)throw new Error("Gemini không chép được lời nào.");
-   it.segments=segs;it.vocab=arr(o.vocab);it.grammar=arr(o.grammar);it.notes=arr(o.notes);st(it.id).ans={};st(it.id).marks=[];save();P.refreshLibrary();U.ipPos=0;reBody();
-   toast(`Đã soạn lại ${segs.length} đoạn.${P.isLocal(it)?"":" (Bài trong repo: thay đổi chỉ trên trình duyệt này — chép JSON để cập nhật GitHub.)"}`)});
+   const base={...it,segments:[],vocab:[],grammar:[],notes:[]};const err=await runChunks(it.youtube,splitRange(from,to),base,el);
+   if(!base.segments.length)throw err||new Error("Gemini không chép được lời nào.");
+   Object.assign(it,{segments:base.segments,vocab:base.vocab,grammar:base.grammar,notes:base.notes,pending:base.pending});st(it.id).ans={};st(it.id).marks=[];save();P.refreshLibrary();U.ipPos=0;reBody();
+   toast(`Đã soạn lại ${it.segments.length} đoạn.${it.pending.length?" Còn phần lỗi — bấm “Thử lại phần lỗi”.":""}${P.isLocal(it)?"":" (Bài trong repo: thay đổi chỉ trên trình duyệt này — chép JSON để cập nhật GitHub.)"}`)});
   if(it.segments.some(x=>x.ko))confirmDlg("Thay toàn bộ transcript, bản dịch và tổng hợp hiện có bằng bản Gemini soạn mới?",go2);else go2()},
+ ipgemfix:el=>{const it=cur();if(!it||!it.pending||!it.pending.length)return;if(!P.gemOK()){P.gemSettings();return}
+  P.busy(el,"Đang thử lại…",async()=>{const parts=it.pending.slice();const base={...it,segments:it.segments.slice(),vocab:(it.vocab||[]).slice(),grammar:(it.grammar||[]).slice(),notes:(it.notes||[]).slice()};
+   const fixed=[];for(const r of parts){const tmp={...base,segments:[]};const err=await runChunks(it.youtube,[r],tmp,null);
+    if(tmp.segments.length){fixed.push(r);tmp.segments.forEach(x=>base.segments.push(x));["vocab","grammar","notes"].forEach(k=>{base[k]=tmp[k]})}}
+   base.segments.sort((a,b)=>a.start-b.start);
+   Object.assign(it,{segments:base.segments,vocab:base.vocab,grammar:base.grammar,notes:base.notes,pending:parts.filter(r=>!fixed.includes(r))});save();P.refreshLibrary();P.render();
+   toast(it.pending.length?`Đã xử lý thêm ${fixed.length} phần; còn ${it.pending.length} phần lỗi, thử lại sau ít phút.`:"Đã xử lý xong mọi phần.")})},
  ipsumgem:el=>{const it=cur();if(!P.gemOK()){P.gemSettings();return}
   P.busy(el,"Gemini đang soạn…",async()=>{const o=await P.gemini([{text:P.summaryPrompt(it)}],{json:true});if(P.applySummary(it,JSON.stringify(o)))reBody()})},
  ipsumimp:()=>{if(P.applySummary(cur(),$("#ip-sumjson").value))reBody()},

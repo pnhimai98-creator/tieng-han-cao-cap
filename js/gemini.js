@@ -16,22 +16,37 @@ P.gemOK=()=>!!G.key;
 /* ---------- gọi Gemini ----------
    parts: mảng phần nội dung, ví dụ [{text:"…"}] hoặc [{file_data:{file_uri:"https://www.youtube.com/watch?v=…"}},{text:"…"}]
    opt.json = true → yêu cầu trả JSON và tự phân tích */
-P.gemini=async(parts,opt={})=>{
+/* Khi mô hình đang chọn quá tải (503…): thử lại 2 lần, rồi TỰ CHUYỂN sang các mô hình Flash khác
+   có trong danh sách (Cài đặt Gemini → Kiểm tra khóa). Mô hình đã lưu không bị đổi. */
+const BAD=/preview|exp|tts|image|live|audio|native|embedding|thinking/i;
+function fallbacks(cur){const list=(G.models&&G.models.length?G.models:[DEFAULT_MODEL,"gemini-3.8-flash","gemini-3.5-flash-lite","gemini-flash-latest","gemini-flash-lite-latest"]).filter(m=>m!==cur&&!BAD.test(m));
+ return list.sort((a,b)=>(/lite/i.test(b)?1:0)-(/lite/i.test(a)?1:0)).slice(0,4)}
+P.gemini=async(parts,opt={})=>{const cur=G.model||DEFAULT_MODEL,waits=[5000,15000];let last;
+ for(let i=0;;i++){try{return await gemOnce(parts,opt,cur)}catch(e){last=e;if(!e.retry||i>=waits.length)break;
+  toast(`Gemini (${cur}) đang quá tải, tự thử lại lần ${i+1}/${waits.length} sau ${waits[i]/1000} giây…`);await new Promise(r=>setTimeout(r,waits[i]))}}
+ if(!last.retry)throw last;
+ for(const m of fallbacks(cur)){toast(`${cur} vẫn quá tải — chuyển sang thử ${m}…`);
+  try{const r=await gemOnce(parts,opt,m);toast(`Đã xong bằng mô hình ${m} (vì ${cur} quá tải).`);return r}
+  catch(e){if(!(e.retry||e.skip))throw e}}
+ throw new Error(`Tất cả mô hình Gemini đều đang quá tải hoặc không dùng được (503). Đây là lỗi phía Google. Hãy thử lại sau 15–30 phút, chọn đoạn video ngắn hơn, hoặc lấy phụ đề YouTube rồi dùng “Tạo thủ công”.${G.models&&G.models.length?"":" Mẹo: mở ✨ Gemini → Kiểm tra khóa để web biết thêm mô hình dự phòng."}`)};
+async function gemOnce(parts,opt,model){
  if(!G.key){openSettings();throw new Error("Chưa có khóa Gemini API — hãy dán khóa vào ô Cài đặt Gemini.")}
  const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),opt.timeout||240000);
  const body={contents:[{role:"user",parts}],generationConfig:{temperature:opt.temperature??0.2}};
  if(opt.json)body.generationConfig.responseMimeType="application/json";
+ if(opt.lowMedia)body.generationConfig.mediaResolution="MEDIA_RESOLUTION_LOW";
  let res;
- try{res=await fetch(`${API}/models/${encodeURIComponent(G.model||DEFAULT_MODEL)}:generateContent`,{method:"POST",signal:ctl.signal,
+ try{res=await fetch(`${API}/models/${encodeURIComponent(model)}:generateContent`,{method:"POST",signal:ctl.signal,
    headers:{"Content-Type":"application/json","x-goog-api-key":G.key},body:JSON.stringify(body)})}
  catch(e){clearTimeout(to);throw new Error(e.name==="AbortError"?"Gemini xử lý quá lâu, đã hủy. Thử đoạn video ngắn hơn.":"Không kết nối được Gemini — kiểm tra mạng.")}
  clearTimeout(to);
  let data={};try{data=await res.json()}catch(e){}
  if(!res.ok){const m=(data.error&&data.error.message)||res.statusText;
-  if(res.status===429)throw new Error("Đã hết lượt miễn phí (429). Đợi một lúc hoặc sang ngày mai rồi thử lại. Chi tiết: "+m);
+  if(res.status===429){const er=new Error(`Mô hình ${model} đã hết lượt miễn phí (429). Đợi một lúc hoặc sang ngày mai, hoặc chọn mô hình khác trong ✨ Gemini. Chi tiết: `+m);er.skip=model!==G.model;throw er}
   if(res.status===400&&/API key/i.test(m))throw new Error("Khóa API không hợp lệ. Kiểm tra lại trong Cài đặt Gemini.");
   if(res.status===403)throw new Error("Khóa bị từ chối (403): "+m);
-  if(res.status===404)throw new Error(`Không có mô hình “${G.model}”. Mở Cài đặt Gemini → Kiểm tra khóa để chọn mô hình khác.`);
+  if(res.status===404){const er=new Error(`Không có mô hình “${model}”. Mở Cài đặt Gemini → Kiểm tra khóa để chọn mô hình khác.`);er.skip=model!==G.model;throw er}
+  if([500,502,503,504].includes(res.status)){const er=new Error(`Máy chủ Gemini (${model}) đang quá tải (${res.status}) — lỗi phía Google.`);er.retry=true;throw er}
   throw new Error(`Gemini báo lỗi ${res.status}: ${m}`)}
  const c=data.candidates&&data.candidates[0];
  const text=c&&c.content&&c.content.parts?c.content.parts.filter(p=>!p.thought).map(p=>p.text||"").join(""):"";
@@ -39,7 +54,7 @@ P.gemini=async(parts,opt={})=>{
  if(c.finishReason==="MAX_TOKENS"&&opt.json)throw new Error("Kết quả quá dài nên bị cắt. Hãy chọn đoạn video ngắn hơn (khoảng 3–8 phút).");
  if(!opt.json)return text;
  try{return P.parseJSON(text)}catch(e){throw new Error("Gemini trả về JSON lỗi. Bấm tạo lại một lần nữa.")}
-};
+}
 
 /* nút đang chạy: khóa nút, hiện trạng thái */
 P.busy=async(btn,label,fn)=>{const old=btn?btn.innerHTML:"";if(btn){btn.disabled=true;btn.innerHTML="⏳ "+label}
