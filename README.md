@@ -50,33 +50,23 @@ Mỗi lần sửa file trên GitHub, web tự cập nhật sau khoảng 1 phút.
 
 ## 3. Thêm bài mới
 
-### Cách A — ngay trên web (nhanh, chỉ lưu trong trình duyệt)
-- **Biên dịch → Dán bài báo của tôi**: dán bài YTN, KBS, SBS… → web tự chia câu.
-- **Phiên dịch → Dán transcript của tôi**: dán bản chép lời YouTube (giữ mốc thời gian) + link video.
-- Sau đó bấm **“Chép lời nhắc tạo tổng hợp”** → dán vào Claude → dán JSON trả về vào bài → có ngay **bản dịch mẫu + bảng từ vựng + bảng cấu trúc – ngữ pháp**.
+### Cách A — ngay trên web, tự động bằng Gemini (miễn phí)
+1. Lấy khóa API miễn phí: mở <https://aistudio.google.com/apikey> → đăng nhập Google → **Create API key** → sao chép.
+2. Trên web bấm nút **✨ Gemini** (góc trên) → dán khóa → **Kiểm tra khóa** → chọn mô hình → **Lưu**.
+   Khóa chỉ lưu trong trình duyệt của bạn, **không** nằm trong repo và **không** có trong file sao lưu.
+3. **Phiên dịch**: dán link YouTube (có thể chọn đoạn 3–8 phút) → **✨ Tạo bằng Gemini** → Gemini nghe video và soạn các đoạn có mốc thời gian, transcript, bản dịch mẫu, từ vựng, ngữ pháp.
+4. **Biên dịch**: dán bài báo → **Tạo bài luyện** → Gemini soạn bản dịch mẫu + tổng hợp. Dịch xong bấm **✨ Gemini chữa bài**.
+
+Lưu ý gói miễn phí: số lượt mỗi ngày có hạn (xem trong AI Studio), chỉ nhận video YouTube công khai, và Google có thể dùng nội dung gửi lên để cải thiện sản phẩm. Kết quả của Gemini có thể sai tên riêng, con số hoặc lệch mốc thời gian 1–2 giây — sửa bằng tab **Chia đoạn** hoặc bấm soạn lại.
 
 ### Cách B — đưa vào repo (hiện trên mọi thiết bị)
 1. Trên GitHub, mở `data/translation.js` (hoặc `data/interpretation.js`) → bấm biểu tượng ✏️.
 2. Chép một khối `{ … }` mẫu, dán ngay sau khối cuối cùng (nhớ **dấu phẩy** giữa hai khối), đổi `id` không trùng, điền nội dung.
 3. **Commit changes**.
 
+Cách nhanh nhất để có khối dữ liệu: tạo bài trên web (cách A) rồi bấm **Chép JSON cả bài**.
+
 Mỗi bài **bắt buộc** có `vocab` (từ vựng) và `grammar` (cấu trúc – ngữ pháp). Từ vựng tự vào flashcard (chủ đề “Từ bài biên – phiên dịch”) và trang **Tổng hợp**.
-
-### Lời nhắc mẫu để Claude soạn cả bài (dán vào Claude)
-
-```
-Hãy soạn một bài luyện biên dịch cho web của tôi, đúng định dạng đối tượng trong data/translation.js:
-{id, kind:"news", source, url, date, topic, level, title,
- headline:{ko, hint, vi},
- segments:[{ko, vi}],
- notes:[…],
- vocab:[{ko, rom, hv, vi, en, str:[…], syn, ant, ex:[Hàn, Việt, Anh]}],
- grammar:[{f, m, ex, vi, ref}]}
-Nguồn: <link bài báo>. Chỉ trích tối đa 2–3 câu ngắn của bài gốc (vì repo công khai);
-phần luyện chính hãy viết lại theo văn phong bản tin. 8–15 từ vựng, 4–8 cấu trúc.
-```
-
-Với phiên dịch, thay bằng `data/interpretation.js`, thêm `kind:"daily"|"news"`, `youtube:"<mã video>"` và `start`/`end` (giây) cho mỗi câu.
 
 ---
 
@@ -86,7 +76,8 @@ Web trên GitHub Pages là **công khai**. Vì vậy:
 - Bài của **YTN, KBS, SBS, MBC, 연합뉴스, báo chí**: trong repo chỉ để **link + trích đoạn ngắn + từ vựng, ghi chú**. Toàn văn hãy dán bằng cách A (chỉ nằm trong trình duyệt của bạn).
 - Nội dung mang nhãn **공공누리 loại 1** (ví dụ 정책브리핑 korea.kr, Korea.net) được đăng lại toàn văn nếu ghi rõ nguồn — kiểm tra nhãn ở cuối mỗi bài.
 - Video: web chỉ **nhúng** video YouTube (không tải về), transcript do bạn soạn.
-- 4 bài mẫu có sẵn là **bài mô phỏng** do Claude viết theo văn phong báo chí; số liệu không phải tin thật.
+- 2 bài biên dịch mẫu là **bài mô phỏng** viết theo văn phong báo chí; số liệu không phải tin thật.
+- Phần **phiên dịch chỉ dùng âm thanh gốc** (YouTube hoặc file .mp3/.m4a của radio, podcast), không dùng giọng máy.
 
 ---
 
