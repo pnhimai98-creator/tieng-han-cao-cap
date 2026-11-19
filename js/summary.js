@@ -59,7 +59,7 @@ P.applySummary=(it,text)=>{let o;try{o=P.parseJSON(text)}catch(e){toast("JSON kh
  save();P.refreshLibrary();toast("Đã thêm phần tổng hợp.");return true};
 
 /* Lời nhắc để dán vào Claude: tạo phần tổng hợp + bản dịch mẫu */
-P.summaryPrompt=it=>`Tôi đang luyện ${it.youtube!==undefined?"phiên dịch":"biên dịch"} Hàn → Việt (trình độ TOPIK 5–6). Dưới đây là văn bản tiếng Hàn đã chia thành ${it.segments.length} câu/đoạn.
+P.summaryPrompt=it=>`Tôi đang luyện ${(it.youtube!==undefined||it.audio!==undefined)?"phiên dịch":"biên dịch"} Hàn → Việt (trình độ TOPIK 5–6). Dưới đây là văn bản tiếng Hàn đã chia thành ${it.segments.length} câu/đoạn.
 Hãy CHỈ trả về một khối JSON hợp lệ (không giải thích thêm) theo đúng mẫu:
 {
  "segments_vi": ["bản dịch tiếng Việt tự nhiên, đúng văn phong của câu 1", "..."],

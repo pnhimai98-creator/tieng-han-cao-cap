@@ -1,29 +1,47 @@
 /* =====================================================================
-   LUYỆN PHIÊN DỊCH — hội thoại hằng ngày (radio, podcast) & tin tức
+   LUYỆN PHIÊN DỊCH — chỉ dùng ÂM THANH GỐC (video YouTube hoặc file radio / podcast)
+   hội thoại hằng ngày & tin tức
    ===================================================================== */
 (()=>{
 const P=window.APP, {$,$$,esc,sayBtn,SPK,S,U,R,AFTER,A,IN,toast,confirmDlg,save,touch,today,addMistake,allIP}=P;
 U.ip=U.ip||null;U.ipTab=U.ipTab||"cons";U.ipPos=0;U.ipSize=U.ipSize||1;U.ipShow=false;
 U.num=U.num||{type:"money",cur:null,ok:0,n:0};
 const SRC=window.SpeechRecognition||window.webkitSpeechRecognition;
-const st=id=>(S.ip[id]=S.ip[id]||{ans:{},note:""});
+const st=id=>{const o=(S.ip[id]=S.ip[id]||{ans:{},note:"",marks:[]});o.ans=o.ans||{};o.marks=o.marks||[];return o};
 const cur=()=>U.ip&&U.ip!=="__num"?allIP().find(x=>x.id===U.ip):null;
-const groups=it=>{const g=[];for(let i=0;i<it.segments.length;i+=U.ipSize)g.push(it.segments.slice(i,i+U.ipSize).map((s,k)=>({...s,idx:i+k})));return g};
-const fmtS=s=>s==null?"":Math.floor(s/60)+":"+String(Math.floor(s%60)).padStart(2,"0");
+const timed=it=>it.segments.filter(s=>s.start!=null);
+const groups=it=>{const T=timed(it),g=[];for(let i=0;i<T.length;i+=U.ipSize)g.push(T.slice(i,i+U.ipSize).map((s,k)=>({...s,idx:i+k})));return g};
+const fmtS=s=>s==null?"":Math.floor(s/60)+":"+(s%60).toFixed(1).padStart(4,"0");
+const hasSrc=it=>!!(it&&(it.youtube||it.audio));
+const isAudioURL=u=>/^https?:\/\/.+\.(mp3|m4a|aac|ogg|oga|wav|opus)(\?|#|$)/i.test(u);
 
-/* ---------- YouTube ---------- */
-let yt=null,ytTimer=null,runTok=0;
+/* =====================================================================
+   TRÌNH PHÁT: YouTube (IFrame API) hoặc file âm thanh (thẻ <audio>)
+   ===================================================================== */
+let yt=null,au=null,segTimer=null,clock=null,runTok=0;
 function loadYT(){if(window.YT&&window.YT.Player)return Promise.resolve();
  if(!loadYT.p)loadYT.p=new Promise(res=>{const prev=window.onYouTubeIframeAPIReady;window.onYouTubeIframeAPIReady=()=>{prev&&prev();res()};
-  const s=document.createElement("script");s.src="https://www.youtube.com/iframe_api";s.onerror=()=>toast("Không tải được YouTube.");document.head.appendChild(s)});return loadYT.p}
-function mountYT(id){yt=null;loadYT().then(()=>{const el=document.getElementById("ytp");if(!el)return;yt=new window.YT.Player("ytp",{videoId:id,playerVars:{rel:0,playsinline:1,modestbranding:1}})})}
-function ytPlay(a,b,onend){if(!yt||!yt.seekTo){toast("Video chưa sẵn sàng, thử lại sau giây lát.");onend&&onend();return}
- clearInterval(ytTimer);yt.seekTo(a,true);yt.playVideo();ytTimer=setInterval(()=>{try{if(yt.getCurrentTime()>=b){yt.pauseVideo();clearInterval(ytTimer);onend&&onend()}}catch(e){clearInterval(ytTimer)}},120)}
-function stopAll(){runTok++;P.stopSpeak();clearInterval(ytTimer);try{yt&&yt.pauseVideo&&yt.pauseVideo()}catch(e){}markLine(-1);status("")}
-/* phát một nhóm câu: video (nếu có mốc thời gian) hoặc giọng đọc máy */
-function playGroup(it,segs,onend){const a=segs[0],b=segs[segs.length-1];
- if(it.youtube&&a.start!=null)ytPlay(a.start,b.end!=null?b.end:b.start+8,onend);
- else P.playSeq(segs.map(s=>s.ko),{pause:300,onLine:i=>{if(i<0)onend&&onend()}})}
+  const s=document.createElement("script");s.src="https://www.youtube.com/iframe_api";s.onerror=()=>toast("Không tải được YouTube — kiểm tra kết nối mạng.");document.head.appendChild(s)});return loadYT.p}
+function mount(it){yt=null;au=null;clearInterval(clock);
+ if(it.youtube)loadYT().then(()=>{if(!document.getElementById("ytp"))return;yt=new window.YT.Player("ytp",{videoId:it.youtube,playerVars:{rel:0,playsinline:1,modestbranding:1},
+  events:{onError:()=>toast("Video không phát được (có thể chủ kênh chặn nhúng). Hãy mở trên YouTube hoặc chọn video khác.")}})});
+ else if(it.audio){au=$("#aup");if(au)au.onerror=()=>toast("Không mở được file âm thanh — kiểm tra lại link.")}
+ clock=setInterval(()=>{const e=$("#ptime");if(e)e.textContent=fmtS(PL.time())},200)}
+const PL={
+ ready:()=>!!((yt&&yt.seekTo)||au),
+ time:()=>{try{return yt&&yt.getCurrentTime?yt.getCurrentTime():au?au.currentTime:0}catch(e){return 0}},
+ dur:()=>{try{return yt&&yt.getDuration?yt.getDuration():au&&isFinite(au.duration)?au.duration:0}catch(e){return 0}},
+ seek:t=>{t=Math.max(0,t);if(yt&&yt.seekTo)yt.seekTo(t,true);else if(au)au.currentTime=t},
+ play:()=>{if(yt&&yt.playVideo)yt.playVideo();else if(au)au.play().catch(()=>toast("Trình duyệt chặn phát — bấm phát trực tiếp trên trình phát."))},
+ pause:()=>{try{if(yt&&yt.pauseVideo)yt.pauseVideo();else if(au)au.pause()}catch(e){}},
+ playing:()=>{try{return yt&&yt.getPlayerState?yt.getPlayerState()===1:au?!au.paused:false}catch(e){return false}}
+};
+/* phát đoạn [a, b] rồi dừng */
+function playRange(a,b,onend){if(!PL.ready()){toast("Trình phát chưa sẵn sàng, thử lại sau giây lát.");onend&&onend();return}
+ clearInterval(segTimer);PL.seek(a);PL.play();segTimer=setInterval(()=>{if(PL.time()>=b-0.05){PL.pause();clearInterval(segTimer);onend&&onend()}},80)}
+function playGroup(it,segs,onend){if(!hasSrc(it)){toast("Bài chưa có nguồn âm thanh gốc.");onend&&onend();return}
+ const a=segs[0],b=segs[segs.length-1];playRange(a.start,b.end!=null?b.end:b.start+8,onend)}
+function stopAll(){runTok++;clearInterval(segTimer);PL.pause();markLine(-1);status("")}
 const status=t=>{const e=$("#ipstat");if(e)e.textContent=t};
 function markLine(i){$$(".line").forEach((x,j)=>x.classList.toggle("now",j===i))}
 
@@ -31,7 +49,7 @@ function markLine(i){$$(".line").forEach((x,j)=>x.classList.toggle("now",j===i))
 let mr=null,chunks=[],recURL={},sr=null;
 const recKey=()=>U.ip+"|"+U.ipSize+"|"+U.ipPos;
 
-/* ---------- đọc transcript dán vào (hỗ trợ định dạng “Hiện bản chép lời” của YouTube) ---------- */
+/* ---------- đọc transcript (hỗ trợ định dạng “Hiện bản chép lời” của YouTube) ---------- */
 P.parseTranscript=txt=>{const lines=String(txt).replace(/\r/g,"").split("\n").map(s=>s.trim()).filter(Boolean);
  const tre=/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:[.,]\d+)?(?:\s*[-–]\s*(?:\d{1,2}:)?\d{1,2}:\d{2}(?:[.,]\d+)?)?\s*(.*)$/,segs=[];let pend=null;
  const add=(text,t)=>{let who="";const m=text.match(/^([^:：\s]{1,8}(?:\s[^:：\s]{1,8})?)\s*[:：]\s*(.+)$/);if(m){who=m[1];text=m[2]}
@@ -40,62 +58,86 @@ P.parseTranscript=txt=>{const lines=String(txt).replace(/\r/g,"").split("\n").ma
  segs.forEach((s,i)=>{if(s.start==null){delete s.start;return}const nx=segs.slice(i+1).find(x=>x.start!=null);s.end=nx?nx.start:s.start+8});
  return segs};
 
-/* ---------- danh sách ---------- */
-function card(t){const local=P.isLocal(t);const s=S.ip[t.id];const done=s?Object.keys(s.ans).length:0;
- return `<article class="card"><div class="row"><span class="pill">${t.kind==="news"?"Tin tức":"Hội thoại"}</span>${t.youtube?'<span class="pill r">YouTube</span>':'<span class="pill">giọng đọc máy</span>'}${local?'<span class="pill">bài của tôi</span>':""}</div>
- <h3 style="margin:8px 0 4px">${esc(t.title)}</h3><p class="muted small" style="margin:0 0 10px">${esc(t.source||"")} · ${t.segments.length} câu · ${(t.vocab||[]).length} từ · ${(t.grammar||[]).length} cấu trúc${done?" · đã luyện "+done+" đoạn":""}</p>
+/* =====================================================================
+   DANH SÁCH BÀI
+   ===================================================================== */
+function card(t){const local=P.isLocal(t);const s=S.ip[t.id];const done=s?Object.keys(s.ans).length:0;const T=timed(t).length;
+ return `<article class="card"><div class="row"><span class="pill">${t.kind==="news"?"Tin tức":"Hội thoại"}</span><span class="pill r">${t.youtube?"YouTube":t.audio?"Âm thanh":"thiếu nguồn"}</span>${local?'<span class="pill">bài của tôi</span>':""}</div>
+ <h3 style="margin:8px 0 4px">${esc(t.title)}</h3><p class="muted small" style="margin:0 0 10px">${esc(t.source||"")} · ${T} đoạn${t.segments.some(x=>x.ko)?"":" · chưa có transcript"} · ${(t.vocab||[]).length} từ · ${(t.grammar||[]).length} cấu trúc${done?" · đã luyện "+done+" đoạn":""}</p>
  <div class="row"><button class="btn sm pri" data-act="ipopen" data-id="${esc(t.id)}">Luyện</button>${local?`<button class="btn sm" data-act="ipdel" data-id="${esc(t.id)}">Xóa</button>`:""}</div></article>`}
 function listView(){const L=allIP();
  return `<h1>Luyện phiên dịch <span class="kr muted" style="font-size:.6em">통역</span></h1>
- <p class="lead">Nghe từng đoạn → dịch thành tiếng (ghi âm được) → so với transcript và bản dịch mẫu. Bài nào cũng có bảng tổng hợp từ vựng và cấu trúc – ngữ pháp.</p>
- <h2>Hội thoại hằng ngày <span class="muted small">radio · podcast · phỏng vấn</span></h2><div class="grid">${L.filter(x=>x.kind!=="news").map(card).join("")||'<p class="muted">Chưa có bài.</p>'}</div>
- <h2>Tin tức</h2><div class="grid">${L.filter(x=>x.kind==="news").map(card).join("")||'<p class="muted">Chưa có bài.</p>'}</div>
- <h2>Kỹ năng bổ trợ</h2><div class="grid"><article class="card"><h3>Luyện số liệu</h3><p class="muted small">Nghe số tiếng Hàn (만, 억, 조, %) và nói / gõ ngay sang tiếng Việt — bẫy lớn nhất khi phiên dịch tin tức.</p><button class="btn sm pri" data-act="ipopen" data-id="__num">Luyện ngay</button></article></div>
- <h2>Thêm bài luyện</h2><div class="two"><div class="card"><h3>Dán transcript của tôi</h3>
- <p class="muted small">Chọn video YouTube của YTN, KBS, SBS… hoặc podcast, mở “Hiện bản chép lời” rồi dán vào đây (giữ cả mốc thời gian). Không có video: web đọc bằng giọng máy.</p>
- <div style="display:grid;gap:8px"><input type="text" id="ni-title" placeholder="Tiêu đề" aria-label="Tiêu đề">
- <div class="row" style="flex-wrap:nowrap"><select id="ni-kind" aria-label="Loại"><option value="daily">Hội thoại hằng ngày</option><option value="news">Tin tức</option></select><input type="text" id="ni-src" placeholder="Nguồn (KBS 라디오, SBS 뉴스…)" aria-label="Nguồn"></div>
- <input type="text" id="ni-yt" placeholder="Link YouTube (không bắt buộc)" aria-label="Link YouTube">
- <textarea id="ni-text" class="kr" rows="7" placeholder="0:03&#10;안녕하십니까, 9시 뉴스입니다.&#10;0:07&#10;앵커: 오늘 서울은…" aria-label="Transcript"></textarea>
- <div class="row"><button class="btn pri" data-act="ipnew">Tạo bài luyện</button></div></div>
- <p class="muted small" style="margin-bottom:0">Mỗi dòng có thể bắt đầu bằng “người nói:”. Sau khi tạo, vào tab “Tổng hợp” để nhờ Claude soạn bản dịch mẫu + từ vựng, ngữ pháp.</p></div>
- <div class="card"><h3>Nhập bài hoàn chỉnh từ JSON</h3><p class="muted small">Định dạng như trong <code>data/interpretation.js</code>. Muốn bài hiện cho mọi thiết bị: dán khối đó vào file trên GitHub.</p>
- <textarea id="ip-json" rows="9" aria-label="JSON bài phiên dịch" placeholder='{"id":"i3","kind":"news","title":"…","youtube":"","segments":[{"who":"앵커","ko":"…","vi":"…"}],"vocab":[…],"grammar":[…]}'></textarea>
- <div class="row" style="margin-top:8px"><button class="btn" data-act="ipimp">Nhập bài</button></div></div></div>`}
+ <p class="lead">Chỉ dùng âm thanh gốc: video YouTube của YTN, KBS, SBS… hoặc file radio, podcast. Nghe từng đoạn, dịch thành tiếng, ghi âm, so với transcript. Bài nào cũng có bảng tổng hợp từ vựng và cấu trúc – ngữ pháp.</p>
+ ${L.length?`<h2>Hội thoại hằng ngày <span class="muted small">radio · podcast · phỏng vấn</span></h2><div class="grid">${L.filter(x=>x.kind!=="news").map(card).join("")||'<p class="muted">Chưa có bài.</p>'}</div>
+ <h2>Tin tức</h2><div class="grid">${L.filter(x=>x.kind==="news").map(card).join("")||'<p class="muted">Chưa có bài.</p>'}</div>`:
+ `<div class="note">Chưa có bài nào. Thêm bài đầu tiên ở khung bên dưới: chọn một video YouTube hoặc tập podcast, dán link, rồi dán bản chép lời.</div>`}
+ <h2>Thêm bài từ nguồn thật</h2><div class="two"><div class="card"><h3>Tạo bài luyện</h3>
+ <ol class="small muted" style="padding-left:18px;margin-top:0"><li>Mở video trên YouTube → <b>…Thêm</b> → <b>Hiện bản chép lời</b> (Show transcript), chọn tiếng Hàn → bôi đen và sao chép <b>cả mốc thời gian</b>.</li>
+ <li>Dán link và bản chép lời vào đây. Không có bản chép lời: vẫn tạo được, rồi dùng tab <b>Chia đoạn</b> để tự cắt đoạn khi nghe.</li></ol>
+ <div style="display:grid;gap:8px"><input type="text" id="ni-title" placeholder="Tiêu đề bài" aria-label="Tiêu đề">
+ <div class="row" style="flex-wrap:nowrap"><select id="ni-kind" aria-label="Loại"><option value="daily">Hội thoại hằng ngày</option><option value="news">Tin tức</option></select><input type="text" id="ni-src" placeholder="Nguồn: KBS 뉴스, SBS 라디오…" aria-label="Nguồn"></div>
+ <input type="text" id="ni-link" placeholder="Link YouTube hoặc link file âm thanh (.mp3, .m4a)" aria-label="Link nguồn">
+ <textarea id="ni-text" class="kr" rows="7" placeholder="0:03&#10;안녕하십니까, 9시 뉴스입니다.&#10;0:07&#10;오늘 서울은…&#10;(không bắt buộc)" aria-label="Bản chép lời"></textarea>
+ <div class="row"><button class="btn pri" data-act="ipnew">Tạo bài luyện</button></div></div></div>
+ <div class="card"><h3>Nhập bài hoàn chỉnh từ JSON</h3><p class="muted small">Định dạng như trong <code>data/interpretation.js</code> (ví dụ do Claude soạn từ link + bản chép lời bạn gửi). Muốn bài hiện trên mọi thiết bị: dán khối đó vào file trên GitHub.</p>
+ <textarea id="ip-json" rows="9" aria-label="JSON bài phiên dịch" placeholder='{"id":"i1","kind":"news","title":"…","youtube":"mã video","segments":[{"who":"앵커","ko":"…","vi":"…","start":3.2,"end":9.8}],"vocab":[…],"grammar":[…]}'></textarea>
+ <div class="row" style="margin-top:8px"><button class="btn" data-act="ipimp">Nhập bài</button></div></div></div>
+ <h2>Kỹ năng bổ trợ</h2><div class="grid"><article class="card"><h3>Luyện số liệu</h3><p class="muted small">Đổi nhanh 만, 억, 조, % sang tiếng Việt — bẫy lớn nhất khi phiên dịch tin tức. (Phần này dùng giọng máy vì số được tạo ngẫu nhiên.)</p><button class="btn sm pri" data-act="ipopen" data-id="__num">Luyện ngay</button></article></div>`}
 
-/* ---------- một bài ---------- */
+/* =====================================================================
+   MỘT BÀI
+   ===================================================================== */
 const SYMBOLS=[["→","dẫn đến, chuyển sang"],["↑ / ↓","tăng / giảm"],["≈","khoảng, xấp xỉ"],["∵ / ∴","vì / cho nên"],["○","người, dân"],["□","quốc gia, nước"],["Gov","chính phủ, nhà nước"],["$","kinh tế, tiền"],["!","quan trọng, nhấn mạnh"],["?","vấn đề, câu hỏi"],["✓ / ✗","đồng ý / phản đối"],["//","kết thúc ý"]];
-function consBody(it){const G=groups(it),n=G.length;U.ipPos=Math.min(U.ipPos,n-1);const g=G[U.ipPos],s=st(it.id),k=g[0].idx;const last=U.ipPos===n-1;
- return `<div class="row" style="margin-bottom:10px"><b>Đoạn ${U.ipPos+1}/${n}</b><label class="small muted" for="ipsize">Mỗi đoạn</label><select id="ipsize" data-in="ipsize">${[1,2,3].map(v=>`<option value="${v}" ${U.ipSize===v?"selected":""}>${v} câu</option>`).join("")}</select>
-  <span class="muted small">${g[0].start!=null?fmtS(g[0].start)+" – "+fmtS(g[g.length-1].end):""}</span></div>
+const needSeg=`<div class="note warn">Bài chưa được chia đoạn. Vào tab <b>Chia đoạn</b> để cắt đoạn khi nghe, hoặc dán bản chép lời có mốc thời gian ở tab <b>Tổng hợp</b>.</div>`;
+function consBody(it){const G=groups(it),n=G.length;if(!n)return needSeg;U.ipPos=Math.min(U.ipPos,n-1);const g=G[U.ipPos],s=st(it.id),k=g[0].idx;const last=U.ipPos===n-1;
+ return `<div class="row" style="margin-bottom:10px"><b>Đoạn ${U.ipPos+1}/${n}</b><label class="small muted" for="ipsize">Mỗi lượt</label><select id="ipsize" data-in="ipsize">${[1,2,3].map(v=>`<option value="${v}" ${U.ipSize===v?"selected":""}>${v} đoạn</option>`).join("")}</select>
+  <span class="muted small">${fmtS(g[0].start)} – ${fmtS(g[g.length-1].end)}</span></div>
  <div class="meter" style="margin-bottom:12px"><i style="width:${(U.ipPos+1)/n*100}%"></i></div>
  <section class="card"><div class="row"><button class="btn pri" data-act="ipplay">${SPK} Nghe đoạn</button><button class="btn" data-act="iprec" id="recbtn">${mr&&mr.state==="recording"?"⏹ Dừng ghi":"🎙 Ghi âm lời dịch"}</button>
   <button class="btn" data-act="ipplayrec" ${recURL[recKey()]?"":"disabled"}>Nghe bản ghi</button>${SRC?`<button class="btn" data-act="ipsr" id="srbtn">${sr?"⏹ Dừng nhận diện":"Nhận diện giọng nói (vi)"}</button>`:""}<button class="btn" data-act="ipstop">Dừng</button><span id="ipstat" class="muted small" aria-live="polite"></span></div>
   <textarea data-in="ipans" data-k="${k}" rows="3" style="margin-top:10px" placeholder="Ghi lại lời dịch của bạn (gõ, hoặc bấm nhận diện giọng nói rồi nói tiếng Việt)…" aria-label="Lời dịch">${esc(s.ans[k]||"")}</textarea>
   <div class="row" style="margin-top:8px"><button class="btn sm" data-act="ipshow">${U.ipShow?"Ẩn":"Hiện"} transcript & bản dịch mẫu</button></div>
-  <div class="ans ${U.ipShow?"on":""}" id="ipref" style="margin-top:10px">${g.map(x=>`<div class="line" style="cursor:default"><span class="who">${esc(x.who||"")}</span><div><div class="row" style="flex-wrap:nowrap;align-items:flex-start">${sayBtn(x.ko)}<span class="txt">${esc(x.ko)}</span></div><div class="muted">${esc(x.vi||"(chưa có bản dịch mẫu — xem tab Tổng hợp)")}</div></div></div>`).join("")}</div>
+  <div class="ans ${U.ipShow?"on":""}" id="ipref" style="margin-top:10px">${g.map(x=>`<div class="line" style="cursor:default"><span class="who">${esc(x.who||"")}</span><div><div class="txt">${esc(x.ko||"(chưa có transcript)")}</div><div class="muted">${esc(x.vi||"(chưa có bản dịch mẫu — xem tab Tổng hợp)")}</div></div></div>`).join("")}</div>
   <div class="row" style="margin-top:12px;justify-content:space-between"><button class="btn" data-act="ipnav" data-d="-1" ${U.ipPos?"":"disabled"}>◀ Đoạn trước</button><button class="btn ${last?"":"pri"}" data-act="ipnav" data-d="1" ${last?"disabled":""}>Đoạn tiếp ▶</button></div></section>
  <details class="card" style="margin-top:12px" open><summary><b>Giấy ghi chép</b> <span class="muted small">노트테이킹 — ghi ký hiệu trong lúc nghe</span></summary>
   <textarea data-in="ipnote" rows="4" style="margin-top:8px" aria-label="Ghi chép">${esc(s.note||"")}</textarea>
   <div class="phr" style="margin-top:8px">${SYMBOLS.map(x=>`<div><b>${x[0]}</b>${x[1]}</div>`).join("")}</div></details>
  ${last&&U.ipShow?`<div class="note" style="margin-top:14px">Bạn đã đến đoạn cuối. Hãy ôn phần tổng hợp bên dưới.</div>${P.summaryHTML(it)}`:""}`}
-function shadowBody(it){return `<section class="card"><div class="row"><button class="btn pri" data-act="iprun" data-v="0">${SPK} Nghe toàn bài</button><button class="btn" data-act="iprun" data-v="1">Shadowing</button><button class="btn" data-act="ipstop">Dừng</button><button class="btn" data-act="iphide">${U.hideT?"Hiện":"Ẩn"} transcript</button><span id="ipstat" class="muted small" aria-live="polite"></span></div>
- <div class="${U.hideT?"hide":""}" style="margin-top:10px">${it.segments.map((x,i)=>`<div class="line" id="ln-${i}" data-act="ipline" data-i="${i}"><span class="who">${esc(x.who||"")}${x.start!=null?`<br><span class="small">${fmtS(x.start)}</span>`:""}</span><span class="txt">${esc(x.ko)}</span></div>`).join("")}</div>
- <p class="muted small" style="margin-bottom:0">Shadowing: nghe một câu, máy dừng đủ lâu để bạn nhại lại. Bấm vào một câu để nghe riêng câu đó.</p></section>`}
-function sumBody(it){const local=P.isLocal(it);
+function shadowBody(it){const T=timed(it);if(!T.length)return needSeg;
+ return `<section class="card"><div class="row"><button class="btn pri" data-act="iprun" data-v="0">${SPK} Nghe lần lượt</button><button class="btn" data-act="iprun" data-v="1">Shadowing</button><button class="btn" data-act="ipstop">Dừng</button><button class="btn" data-act="iphide">${U.hideT?"Hiện":"Ẩn"} transcript</button><span id="ipstat" class="muted small" aria-live="polite"></span></div>
+ <div class="${U.hideT?"hide":""}" style="margin-top:10px">${T.map((x,i)=>`<div class="line" id="ln-${i}" data-act="ipline" data-i="${i}"><span class="who">${esc(x.who||"")}<br><span class="small">${fmtS(x.start)}</span></span><span class="txt">${esc(x.ko||"(chưa có transcript)")}</span></div>`).join("")}</div>
+ <p class="muted small" style="margin-bottom:0">Shadowing: phát một đoạn, dừng đúng bằng độ dài đoạn đó để bạn nhại lại. Bấm vào một dòng để nghe riêng.</p></section>`}
+/* --- chia đoạn trên âm thanh gốc --- */
+function marksList(it){const m=st(it.id).marks;
+ return m.length?`<ol class="small" style="padding-left:20px;margin:8px 0">${m.slice(0,-1).map((t,i)=>`<li>${fmtS(t)} – ${fmtS(m[i+1])} <button class="btn sm" data-act="mkplay" data-i="${i}">Nghe</button></li>`).join("")}</ol>
+  <div class="row small muted">Điểm cắt: ${m.map((t,i)=>`<span class="pill" style="margin:2px">${fmtS(t)} <button data-act="mkdel" data-i="${i}" aria-label="Xóa điểm cắt" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px">×</button></span>`).join("")}</div>`:`<p class="muted small">Chưa có điểm cắt nào.</p>`}
+function markBody(it){
+ return `<section class="card"><p class="small muted" style="margin-top:0">Phát âm thanh gốc, bấm <b>✂ Cắt tại đây</b> (hoặc phím <b>C</b>) ở <b>đầu đoạn đầu tiên</b>, <b>sau mỗi câu / ý</b>, và ở <b>cuối</b>. n điểm cắt tạo ra n − 1 đoạn luyện.</p>
+ <div class="row"><button class="btn" data-act="mkback">⏪ 3 giây</button><button class="btn pri" data-act="mktoggle">▶ / ⏸</button><button class="btn pri" data-act="mkcut">✂ Cắt tại đây</button><span class="timer" style="font-size:24px" id="ptime">0:00.0</span></div>
+ <div id="mklist">${marksList(it)}</div>
+ <div class="row" style="margin-top:10px"><button class="btn pri" data-act="mksave">Lưu thành các đoạn luyện</button><button class="btn" data-act="mkclear">Xóa hết điểm cắt</button></div>
+ ${P.isLocal(it)?"":`<p class="note warn small">Đây là bài trong repo: thay đổi chỉ lưu trên trình duyệt này. Muốn lưu lâu dài, chép JSON ở tab Tổng hợp rồi cập nhật file <code>data/interpretation.js</code>.</p>`}</section>`}
+function sumBody(it){const noKo=!it.segments.some(x=>x.ko);
  return `${it.notes&&it.notes.length?`<div class="note" style="margin-bottom:14px"><b>Ghi chú phiên dịch</b><ul style="margin:6px 0 0;padding-left:18px">${it.notes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul></div>`:""}
- ${P.summaryHTML(it,{empty:local?"Dùng khung bên dưới để thêm.":""})}
- ${local?`<section class="card" style="margin-top:14px"><h3>Phần tổng hợp & bản dịch mẫu từ Claude</h3><p class="muted small">1) Chép lời nhắc → 2) dán vào Claude → 3) dán JSON trả về vào ô dưới.</p>
-  <div class="row"><button class="btn" data-act="ipsumprompt">Chép lời nhắc tạo tổng hợp</button></div><textarea id="ip-sumjson" rows="6" style="margin-top:8px" aria-label="JSON tổng hợp" placeholder='{"segments_vi":[…],"vocab":[…],"grammar":[…]}'></textarea>
-  <div class="row" style="margin-top:8px"><button class="btn pri" data-act="ipsumimp">Thêm vào bài</button></div></section>`:""}`}
-function body(it){return U.ipTab==="shadow"?shadowBody(it):U.ipTab==="sum"?sumBody(it):consBody(it)}
+ ${P.summaryHTML(it,{empty:"Dùng khung bên dưới để thêm."})}
+ <section class="card" style="margin-top:14px"><h3>${noKo?"1. Dán bản chép lời":"Cập nhật bản chép lời"}</h3><p class="muted small">Bản chép lời tiếng Hàn từ YouTube (giữ mốc thời gian). Có mốc thời gian thì web tự chia đoạn theo đúng câu.</p>
+  <textarea id="ip-trans" class="kr" rows="5" aria-label="Bản chép lời" placeholder="0:03&#10;안녕하십니까…"></textarea><div class="row" style="margin-top:8px"><button class="btn" data-act="iptrans">Lưu bản chép lời</button></div></section>
+ <section class="card" style="margin-top:14px"><h3>${noKo?"2. ":""}Phần tổng hợp & bản dịch mẫu từ Claude</h3><p class="muted small">Chép lời nhắc → dán vào Claude → dán JSON trả về vào ô dưới.</p>
+  <div class="row"><button class="btn" data-act="ipsumprompt" ${noKo?"disabled":""}>Chép lời nhắc tạo tổng hợp</button></div><textarea id="ip-sumjson" rows="6" style="margin-top:8px" aria-label="JSON tổng hợp" placeholder='{"segments_vi":[…],"vocab":[…],"grammar":[…]}'></textarea>
+  <div class="row" style="margin-top:8px"><button class="btn pri" data-act="ipsumimp">Thêm vào bài</button><button class="btn" data-act="ipcopyjson">Chép JSON cả bài (để đưa lên GitHub)</button></div></section>`}
+function body(it){return U.ipTab==="shadow"?shadowBody(it):U.ipTab==="sum"?sumBody(it):U.ipTab==="mark"?markBody(it):consBody(it)}
+function player(it){if(it.youtube)return `<div class="yt"><div id="ytp"></div></div>`;
+ if(it.audio)return `<audio id="aup" controls preload="metadata" src="${esc(it.audio)}" style="width:100%;max-width:720px"></audio>`;
+ return `<div class="note warn">Bài này chưa có nguồn âm thanh gốc. Thêm trường <code>youtube</code> hoặc <code>audio</code> trong dữ liệu, hoặc tạo lại bài với link nguồn.</div>`}
 function exView(it){return `<button class="btn sm" data-act="ipback">← Danh sách bài</button>
- <h1 style="margin-top:14px">${esc(it.title)}</h1><div class="row small muted" style="margin-bottom:12px"><span class="pill">${it.kind==="news"?"Tin tức":"Hội thoại hằng ngày"}</span><span>${esc(it.source||"")}</span>${it.level?`<span>· ${esc(it.level)}</span>`:""}${it.url?`<a href="${esc(it.url)}" target="_blank" rel="noopener">Nguồn ↗</a>`:""}</div>
- ${it.youtube?`<div class="yt"><div id="ytp"></div></div>${it.segments.some(s=>s.start!=null)?"":'<p class="note warn small">Bài chưa có mốc thời gian nên web sẽ đọc transcript bằng giọng máy; video chỉ để xem.</p>'}`:`<p class="note small">Bài này phát bằng giọng đọc tiếng Hàn của thiết bị — chỉnh tốc độ ở góc trên.</p>`}
- <div class="tabs" style="margin-top:14px">${[["cons","Dịch đuổi"],["shadow","Nghe & shadowing"],["sum","Tổng hợp từ & ngữ pháp"]].map(t=>`<button class="${U.ipTab===t[0]?"on":""}" data-act="iptab" data-v="${t[0]}">${t[1]}</button>`).join("")}</div>
+ <h1 style="margin-top:14px">${esc(it.title)}</h1><div class="row small muted" style="margin-bottom:12px"><span class="pill">${it.kind==="news"?"Tin tức":"Hội thoại hằng ngày"}</span><span>${esc(it.source||"")}</span>${it.level?`<span>· ${esc(it.level)}</span>`:""}${it.url?`<a href="${esc(it.url)}" target="_blank" rel="noopener">Mở nguồn gốc ↗</a>`:""}</div>
+ ${player(it)}
+ <div class="tabs" style="margin-top:14px">${[["cons","Dịch đuổi"],["shadow","Nghe & shadowing"],["mark","Chia đoạn"],["sum","Tổng hợp từ & ngữ pháp"]].map(t=>`<button class="${U.ipTab===t[0]?"on":""}" data-act="iptab" data-v="${t[0]}">${t[1]}</button>`).join("")}</div>
  <div id="ipbody">${body(it)}</div>`}
 
-/* ---------- luyện số liệu ---------- */
+/* =====================================================================
+   LUYỆN SỐ LIỆU
+   ===================================================================== */
 const rnd=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
 P.koNum=n=>{const jo=Math.floor(n/1e12),ek=Math.floor(n%1e12/1e8),man=Math.floor(n%1e8/1e4),rest=n%1e4,p=[];if(jo)p.push(jo+"조");if(ek)p.push(ek+"억");if(man)p.push(man+"만");if(rest)p.push(String(rest));return p.join(" ")||"0"};
 const fmtVi=x=>x.toLocaleString("vi-VN",{maximumFractionDigits:3});
@@ -115,13 +157,13 @@ function genNum(type){if(type==="mix")type=["money","money","people","pct"][rnd(
  return{type:"money",a,ko:P.koNum(a)+" 원",vi:P.viWords(a)+" won ("+fmtVi(a)+")"}}
 function numView(){const N=U.num;
  return `<button class="btn sm" data-act="ipback">← Danh sách bài</button><h1 style="margin-top:14px">Luyện số liệu <span class="kr muted" style="font-size:.6em">숫자 통역</span></h1>
- <p class="lead">Nghe con số tiếng Hàn rồi gõ sang tiếng Việt, ví dụ “352 triệu”, “1.200 tỷ”, “12,5”. Nhớ quy tắc: 만 = 10 nghìn · 억 = 100 triệu · 조 = 1 nghìn tỷ.</p>
+ <p class="lead">Nghe con số tiếng Hàn rồi gõ sang tiếng Việt, ví dụ “352 triệu”, “1.200 tỷ”, “12,5”. Quy tắc: 만 = 10 nghìn · 억 = 100 triệu · 조 = 1 nghìn tỷ. (Số tạo ngẫu nhiên nên dùng giọng máy.)</p>
  <section class="card"><div class="row"><select data-in="numtype" aria-label="Loại số">${[["money","Tiền (원)"],["people","Số người (명)"],["pct","Phần trăm"],["mix","Trộn lẫn"]].map(o=>`<option value="${o[0]}" ${N.type===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select>
   <button class="btn pri" data-act="numnew">${SPK} Số mới</button><button class="btn" data-act="numagain" ${N.cur?"":"disabled"}>Nghe lại</button><span class="muted small" id="num-stat">Đúng ${N.ok}/${N.n}</span></div>
   <div class="row" style="margin-top:12px;flex-wrap:nowrap"><input type="text" id="num-ans" placeholder="Gõ số tiếng Việt rồi nhấn Enter" aria-label="Đáp án" autocomplete="off"><button class="btn" data-act="numchk">Kiểm tra</button></div>
   <div id="num-fb" style="margin-top:10px"></div></section>
  <h2>Bảng quy đổi nhanh</h2><div class="scroll"><table class="stack"><thead><tr><th>Tiếng Hàn</th><th>Giá trị</th><th>Tiếng Việt</th></tr></thead><tbody>
- ${[["1만","10.000","mười nghìn"],["10만","100.000","một trăm nghìn"],["100만","1.000.000","một triệu"],["1000만 (천만)","10.000.000","mười triệu"],["1억","100.000.000","một trăm triệu"],["10억","1.000.000.000","một tỷ"],["100억","10.000.000.000","mười tỷ"],["1000억 (천억)","100.000.000.000","một trăm tỷ"],["1조","1.000.000.000.000","một nghìn tỷ"]].map(r=>`<tr><td data-l="Hàn" class="kr"><b>${r[0]}</b> ${sayBtn(r[0])}</td><td data-l="Giá trị">${r[1]}</td><td data-l="Việt">${r[2]}</td></tr>`).join("")}</tbody></table></div>`}
+ ${[["1만","10.000","mười nghìn"],["10만","100.000","một trăm nghìn"],["100만","1.000.000","một triệu"],["1000만 (천만)","10.000.000","mười triệu"],["1억","100.000.000","một trăm triệu"],["10억","1.000.000.000","một tỷ"],["100억","10.000.000.000","mười tỷ"],["1000억 (천억)","100.000.000.000","một trăm tỷ"],["1조","1.000.000.000.000","một nghìn tỷ"]].map(r=>`<tr><td data-l="Hàn" class="kr"><b>${r[0]}</b></td><td data-l="Giá trị">${r[1]}</td><td data-l="Việt">${r[2]}</td></tr>`).join("")}</tbody></table></div>`}
 function numCheck(){const N=U.num,inp=$("#num-ans"),fb=$("#num-fb");if(!N.cur){toast("Bấm “Số mới” trước.");return}if(!inp.value.trim())return;
  const c=N.cur;const v=c.type==="pct"?parseFloat(inp.value.replace(",",".").replace(/[^\d.]/g,"")):P.parseVi(inp.value);const ok=c.type==="pct"?Math.abs(v-c.a)<1e-9:v===c.a;
  N.n++;if(ok)N.ok++;else addMistake({key:"num-"+c.ko,src:"Luyện số",q:c.ko,o:null,a:c.vi});touch();
@@ -129,18 +171,22 @@ function numCheck(){const N=U.num,inp=$("#num-ans"),fb=$("#num-fb");if(!N.cur){t
  const s=$("#num-stat");if(s)s.textContent=`Đúng ${N.ok}/${N.n}`;N.cur=ok?null:N.cur}
 
 R.interpret=()=>{if(U.ip==="__num")return numView();const it=cur();if(!it){U.ip=null;return listView()}return exView(it)};
-AFTER.interpret=()=>{const it=cur();if(it&&it.youtube)mountYT(it.youtube)};
+AFTER.interpret=()=>{const it=cur();if(it&&hasSrc(it))mount(it)};
 const reBody=()=>{const it=cur(),b=$("#ipbody");if(it&&b)b.innerHTML=body(it)};
 
-/* ---------- sự kiện ---------- */
+/* =====================================================================
+   SỰ KIỆN
+   ===================================================================== */
 Object.assign(A,{
- ipopen:el=>{stopAll();U.ip=el.dataset.id;U.ipPos=0;U.ipShow=false;U.ipTab="cons";P.render();window.scrollTo(0,0)},
- ipback:()=>{stopAll();U.ip=null;P.render();window.scrollTo(0,0)},
+ ipopen:el=>{stopAll();U.ip=el.dataset.id;U.ipPos=0;U.ipShow=false;const it=cur();U.ipTab=it&&!timed(it).length?"mark":"cons";P.render();window.scrollTo(0,0)},
+ ipback:()=>{stopAll();clearInterval(clock);U.ip=null;P.render();window.scrollTo(0,0)},
  ipdel:el=>confirmDlg("Xóa bài này?",()=>{const id=el.dataset.id;S.lib.ip=S.lib.ip.filter(x=>x.id!==id);delete S.ip[id];save();P.render()}),
- ipnew:()=>{const segs=P.parseTranscript($("#ni-text").value);if(!segs.length){toast("Hãy dán transcript.");return}
-  const ytv=P.ytId($("#ni-yt").value);const it={id:"my-i"+Date.now().toString(36),kind:$("#ni-kind").value,source:$("#ni-src").value.trim(),url:$("#ni-yt").value.trim(),youtube:ytv,date:today(),title:$("#ni-title").value.trim()||segs[0].ko.slice(0,40)+"…",segments:segs,notes:[],vocab:[],grammar:[]};
-  if($("#ni-yt").value.trim()&&!ytv)toast("Không đọc được mã video YouTube — bài sẽ dùng giọng đọc máy.");
-  S.lib.ip.push(it);save();P.refreshLibrary();U.ip=it.id;U.ipPos=0;U.ipTab="sum";P.render();window.scrollTo(0,0);toast(`Đã tạo bài ${segs.length} câu. Hãy thêm phần tổng hợp.`)},
+ ipnew:()=>{const link=$("#ni-link").value.trim();const ytv=P.ytId(link);const audio=!ytv&&isAudioURL(link)?link:"";
+  if(!ytv&&!audio){toast("Cần link YouTube hoặc link file âm thanh (.mp3, .m4a…).");return}
+  const segs=P.parseTranscript($("#ni-text").value);
+  const it={id:"my-i"+Date.now().toString(36),kind:$("#ni-kind").value,source:$("#ni-src").value.trim(),url:link,youtube:ytv,audio,date:today(),title:$("#ni-title").value.trim()||(segs[0]?segs[0].ko.slice(0,40)+"…":"Bài phiên dịch "+today()),segments:segs,notes:[],vocab:[],grammar:[]};
+  S.lib.ip.push(it);save();P.refreshLibrary();U.ip=it.id;U.ipPos=0;const hasT=timed(it).length;U.ipTab=hasT?"sum":"mark";P.render();window.scrollTo(0,0);
+  toast(hasT?`Đã tạo ${hasT} đoạn theo mốc thời gian. Tiếp theo: tạo phần tổng hợp.`:"Đã tạo bài. Hãy chia đoạn khi nghe.")},
  ipimp:()=>{if(P.importItems("ip",$("#ip-json").value))P.render()},
  iptab:el=>{stopAll();U.ipTab=el.dataset.v;$$(".tabs [data-act=iptab]").forEach(b=>b.classList.toggle("on",b===el));reBody()},
  ipplay:()=>{const it=cur();const g=groups(it)[U.ipPos];stopAll();status("Đang phát…");touch();playGroup(it,g,()=>status("Đến lượt bạn dịch — có thể bấm ghi âm."))},
@@ -159,14 +205,32 @@ Object.assign(A,{
   sr.onend=()=>{sr=null;const b=$("#srbtn");if(b)b.textContent="Nhận diện giọng nói (vi)";status("")};sr.onerror=e=>{toast("Nhận diện giọng nói lỗi: "+e.error)};
   try{sr.start();el.textContent="⏹ Dừng nhận diện";status("Nói lời dịch tiếng Việt…")}catch(e){sr=null}},
  iphide:()=>{U.hideT=!U.hideT;reBody()},
- iprun:el=>{const it=cur(),shadow=el.dataset.v==="1";stopAll();const my=++runTok;let i=0;touch();
-  const step=()=>{if(my!==runTok)return;if(i>=it.segments.length){markLine(-1);status(shadow?"Hoàn thành shadowing.":"");return}
-   markLine(i);const s=it.segments[i];status(`Câu ${i+1}/${it.segments.length}`);const ln=document.getElementById("ln-"+i);if(ln&&!U.hideT)ln.scrollIntoView({block:"nearest"});
-   playGroup(it,[s],()=>{if(my!==runTok)return;const wait=shadow?(it.youtube&&s.start!=null?Math.max(1500,((s.end??s.start+5)-s.start)*1100):Math.max(1800,s.ko.length*170/S.rate)):350;
+ iprun:el=>{const it=cur(),T=timed(it),shadow=el.dataset.v==="1";stopAll();const my=++runTok;let i=0;touch();
+  const step=()=>{if(my!==runTok)return;if(i>=T.length){markLine(-1);status(shadow?"Hoàn thành shadowing.":"");return}
+   markLine(i);const s=T[i];status(`Đoạn ${i+1}/${T.length}`);const ln=document.getElementById("ln-"+i);if(ln&&!U.hideT)ln.scrollIntoView({block:"nearest"});
+   playGroup(it,[s],()=>{if(my!==runTok)return;const wait=shadow?Math.max(1500,((s.end??s.start+5)-s.start)*1100):300;
     if(shadow)status("🎙 Đến lượt bạn nhại lại…");i++;setTimeout(step,wait)})};step()},
- ipline:el=>{const it=cur(),i=+el.dataset.i;stopAll();markLine(i);playGroup(it,[it.segments[i]],()=>markLine(-1))},
+ ipline:el=>{const it=cur(),i=+el.dataset.i;stopAll();markLine(i);playGroup(it,[timed(it)[i]],()=>markLine(-1))},
+ /* chia đoạn */
+ mktoggle:()=>{if(PL.playing())PL.pause();else PL.play()},
+ mkback:()=>PL.seek(PL.time()-3),
+ mkcut:()=>{const it=cur();if(!PL.ready()){toast("Trình phát chưa sẵn sàng.");return}const t=Math.round(PL.time()*10)/10,m=st(it.id).marks;
+  if(m.some(x=>Math.abs(x-t)<0.3))return;m.push(t);m.sort((a,b)=>a-b);save();$("#mklist").innerHTML=marksList(it);status("")},
+ mkdel:el=>{const it=cur();st(it.id).marks.splice(+el.dataset.i,1);save();$("#mklist").innerHTML=marksList(it)},
+ mkplay:el=>{const it=cur(),m=st(it.id).marks,i=+el.dataset.i;stopAll();playRange(m[i],m[i+1])},
+ mkclear:()=>confirmDlg("Xóa hết điểm cắt?",()=>{const it=cur();st(it.id).marks=[];save();reBody()}),
+ mksave:()=>{const it=cur(),m=st(it.id).marks;if(m.length<2){toast("Cần ít nhất 2 điểm cắt (đầu và cuối).");return}
+  const old=it.segments,n=m.length-1,keep=old.length===n;
+  const apply=()=>{it.segments=m.slice(0,-1).map((t,i)=>({who:keep?old[i].who||"":"",ko:keep?old[i].ko||"":"",vi:keep?old[i].vi||"":"",start:t,end:m[i+1]}));
+   S.ip[it.id].ans={};save();U.ipPos=0;U.ipTab="cons";P.render();toast(`Đã tạo ${n} đoạn luyện.${keep?" Giữ nguyên transcript theo thứ tự.":""}`)};
+  if(old.length&&!keep&&old.some(x=>x.ko))confirmDlg(`Số đoạn mới (${n}) khác số câu transcript (${old.length}); transcript cũ sẽ bị tách khỏi đoạn. Tiếp tục?`,apply);else apply()},
+ /* tổng hợp */
+ iptrans:()=>{const it=cur();const segs=P.parseTranscript($("#ip-trans").value);if(!segs.length){toast("Hãy dán bản chép lời.");return}
+  if(!segs.some(s=>s.start!=null)&&timed(it).length===segs.length){segs.forEach((s,i)=>{const o=timed(it)[i];s.start=o.start;s.end=o.end})}
+  it.segments=segs;save();P.refreshLibrary();reBody();toast(segs.some(s=>s.start!=null)?`Đã lưu ${segs.length} đoạn kèm mốc thời gian.`:"Đã lưu bản chép lời (chưa có mốc thời gian — dùng tab Chia đoạn).")},
  ipsumprompt:()=>P.copyText(P.summaryPrompt(cur())),
  ipsumimp:()=>{if(P.applySummary(cur(),$("#ip-sumjson").value))reBody()},
+ ipcopyjson:()=>{const it=cur();const o={...it};P.copyText(JSON.stringify(o,null,1)+",")},
  numnew:()=>{U.num.cur=genNum(U.num.type);P.speak(U.num.cur.ko);const i=$("#num-ans");i.value="";i.focus();$("#num-fb").innerHTML="";const b=$("[data-act=numagain]");if(b)b.disabled=false},
  numagain:()=>{if(U.num.cur)P.speak(U.num.cur.ko)},
  numchk:()=>numCheck()
@@ -176,6 +240,7 @@ IN.ipans=el=>{const it=cur();if(!it)return;st(it.id).ans[el.dataset.k]=el.value;
 IN.ipnote=el=>{const it=cur();if(!it)return;st(it.id).note=el.value;clearTimeout(dt);dt=setTimeout(save,500)};
 IN.ipsize=el=>{const first=groups(cur())[U.ipPos][0].idx;U.ipSize=+el.value;U.ipPos=Math.floor(first/U.ipSize);U.ipShow=false;reBody()};
 IN.numtype=el=>{U.num.type=el.value;U.num.cur=null};
-document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="num-ans"){e.preventDefault();numCheck()}});
-window.addEventListener("hashchange",()=>{clearInterval(ytTimer);runTok++});
+document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="num-ans"){e.preventDefault();numCheck()}
+ if((e.key==="c"||e.key==="C")&&P.view==="interpret"&&U.ipTab==="mark"&&!e.target.closest("input,textarea,select")){e.preventDefault();A.mkcut()}});
+window.addEventListener("hashchange",()=>{clearInterval(segTimer);runTok++;try{PL.pause()}catch(e){}});
 })();
