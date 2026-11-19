@@ -13,6 +13,12 @@ const timed=it=>it.segments.filter(s=>s.start!=null);
 const groups=it=>{const T=timed(it),g=[];for(let i=0;i<T.length;i+=U.ipSize)g.push(T.slice(i,i+U.ipSize).map((s,k)=>({...s,idx:i+k})));return g};
 const fmtS=s=>s==null?"":Math.floor(s/60)+":"+(s%60).toFixed(1).padStart(4,"0");
 const hasSrc=it=>!!(it&&(it.youtube||it.audio));
+const arr=x=>Array.isArray(x)?x:[];
+const parseClock=v=>{v=String(v||"").trim();if(!v)return null;const p=v.split(":").map(Number);if(p.some(isNaN))return null;return p.reduce((a,b)=>a*60+b,0)};
+function callVideo(ytv,from,to){const fd={file_data:{file_uri:"https://www.youtube.com/watch?v="+ytv}};
+ if(from!=null||to!=null){fd.video_metadata={};if(from!=null)fd.video_metadata.start_offset=from+"s";if(to!=null)fd.video_metadata.end_offset=to+"s"}
+ const range=(from!=null||to!=null)?`${fmtS(from||0)} – ${to!=null?fmtS(to):"hết video"}`:"";
+ return P.gemini([fd,{text:P.gemVideoPrompt(range)}],{json:true,timeout:300000})}
 const isAudioURL=u=>/^https?:\/\/.+\.(mp3|m4a|aac|ogg|oga|wav|opus)(\?|#|$)/i.test(u);
 
 /* =====================================================================
@@ -70,16 +76,20 @@ function listView(){const L=allIP();
  <p class="lead">Chỉ dùng âm thanh gốc: video YouTube của YTN, KBS, SBS… hoặc file radio, podcast. Nghe từng đoạn, dịch thành tiếng, ghi âm, so với transcript. Bài nào cũng có bảng tổng hợp từ vựng và cấu trúc – ngữ pháp.</p>
  ${L.length?`<h2>Hội thoại hằng ngày <span class="muted small">radio · podcast · phỏng vấn</span></h2><div class="grid">${L.filter(x=>x.kind!=="news").map(card).join("")||'<p class="muted">Chưa có bài.</p>'}</div>
  <h2>Tin tức</h2><div class="grid">${L.filter(x=>x.kind==="news").map(card).join("")||'<p class="muted">Chưa có bài.</p>'}</div>`:
- `<div class="note">Chưa có bài nào. Thêm bài đầu tiên ở khung bên dưới: chọn một video YouTube hoặc tập podcast, dán link, rồi dán bản chép lời.</div>`}
- <h2>Thêm bài từ nguồn thật</h2><div class="two"><div class="card"><h3>Tạo bài luyện</h3>
- <ol class="small muted" style="padding-left:18px;margin-top:0"><li>Mở video trên YouTube → <b>…Thêm</b> → <b>Hiện bản chép lời</b> (Show transcript), chọn tiếng Hàn → bôi đen và sao chép <b>cả mốc thời gian</b>.</li>
- <li>Dán link và bản chép lời vào đây. Không có bản chép lời: vẫn tạo được, rồi dùng tab <b>Chia đoạn</b> để tự cắt đoạn khi nghe.</li></ol>
- <div style="display:grid;gap:8px"><input type="text" id="ni-title" placeholder="Tiêu đề bài" aria-label="Tiêu đề">
- <div class="row" style="flex-wrap:nowrap"><select id="ni-kind" aria-label="Loại"><option value="daily">Hội thoại hằng ngày</option><option value="news">Tin tức</option></select><input type="text" id="ni-src" placeholder="Nguồn: KBS 뉴스, SBS 라디오…" aria-label="Nguồn"></div>
- <input type="text" id="ni-link" placeholder="Link YouTube hoặc link file âm thanh (.mp3, .m4a)" aria-label="Link nguồn">
- <textarea id="ni-text" class="kr" rows="7" placeholder="0:03&#10;안녕하십니까, 9시 뉴스입니다.&#10;0:07&#10;오늘 서울은…&#10;(không bắt buộc)" aria-label="Bản chép lời"></textarea>
- <div class="row"><button class="btn pri" data-act="ipnew">Tạo bài luyện</button></div></div></div>
- <div class="card"><h3>Nhập bài hoàn chỉnh từ JSON</h3><p class="muted small">Định dạng như trong <code>data/interpretation.js</code> (ví dụ do Claude soạn từ link + bản chép lời bạn gửi). Muốn bài hiện trên mọi thiết bị: dán khối đó vào file trên GitHub.</p>
+ `<div class="note">Chưa có bài nào. Dán link một video YouTube (bản tin, phỏng vấn, radio…) vào khung bên dưới và bấm <b>✨ Tạo bằng Gemini</b>.</div>`}
+ <h2>Thêm bài từ nguồn thật</h2><div class="two"><div class="card"><h3>✨ Tạo tự động bằng Gemini <span class="muted small">(link YouTube)</span></h3>
+ <p class="small muted" style="margin-top:0">Gemini nghe video và tự soạn: các đoạn kèm mốc thời gian, transcript tiếng Hàn, bản dịch mẫu, bảng từ vựng và ngữ pháp. ${P.gemOK()?'<span style="color:var(--ok)">✓ Đã có khóa Gemini.</span>':'<b>Cần khóa Gemini miễn phí:</b> <button class="btn sm" data-act="gset">Cài đặt Gemini</button>'}</p>
+ <div style="display:grid;gap:8px"><input type="text" id="ni-link" placeholder="Link YouTube (video công khai)" aria-label="Link nguồn">
+ <div class="row" style="flex-wrap:nowrap"><label class="small muted" for="ni-from" style="white-space:nowrap">Chỉ lấy từ</label><input type="text" id="ni-from" placeholder="0:00" aria-label="Từ phút" style="max-width:110px"><label class="small muted" for="ni-to">đến</label><input type="text" id="ni-to" placeholder="5:00" aria-label="Đến phút" style="max-width:110px"></div>
+ <p class="small muted" style="margin:0">Video dài nên chọn một đoạn 3–8 phút để Gemini chép đủ và đỡ tốn lượt miễn phí. Để trống = cả video.</p>
+ <div class="row" style="flex-wrap:nowrap"><select id="ni-kind" aria-label="Loại"><option value="">Loại: Gemini tự nhận</option><option value="daily">Hội thoại hằng ngày</option><option value="news">Tin tức</option></select><input type="text" id="ni-src" placeholder="Nguồn: KBS 뉴스, SBS 라디오…" aria-label="Nguồn"></div>
+ <input type="text" id="ni-title" placeholder="Tiêu đề (để trống: Gemini tự đặt)" aria-label="Tiêu đề">
+ <div class="row"><button class="btn pri" data-act="ipgem">✨ Tạo bằng Gemini</button></div>
+ <details class="small"><summary>Tạo thủ công (file âm thanh .mp3, hoặc tự dán bản chép lời)</summary>
+  <p class="muted">Dán link file âm thanh hoặc link YouTube ở ô trên, dán bản chép lời (giữ mốc thời gian) vào đây. Không có bản chép lời: dùng tab <b>Chia đoạn</b>.</p>
+  <textarea id="ni-text" class="kr" rows="5" placeholder="0:03&#10;안녕하십니까, 9시 뉴스입니다.&#10;0:07&#10;오늘 서울은…" aria-label="Bản chép lời"></textarea>
+  <div class="row" style="margin-top:8px"><button class="btn" data-act="ipnew">Tạo thủ công</button></div></details></div></div>
+ <div class="card"><h3>Nhập bài hoàn chỉnh từ JSON</h3><p class="muted small">Định dạng như trong <code>data/interpretation.js</code> — ví dụ JSON bạn đã bấm “Chép JSON cả bài” trên máy khác. Muốn bài hiện trên mọi thiết bị: dán khối đó vào file trên GitHub.</p>
  <textarea id="ip-json" rows="9" aria-label="JSON bài phiên dịch" placeholder='{"id":"i1","kind":"news","title":"…","youtube":"mã video","segments":[{"who":"앵커","ko":"…","vi":"…","start":3.2,"end":9.8}],"vocab":[…],"grammar":[…]}'></textarea>
  <div class="row" style="margin-top:8px"><button class="btn" data-act="ipimp">Nhập bài</button></div></div></div>
  <h2>Kỹ năng bổ trợ</h2><div class="grid"><article class="card"><h3>Luyện số liệu</h3><p class="muted small">Đổi nhanh 만, 억, 조, % sang tiếng Việt — bẫy lớn nhất khi phiên dịch tin tức. (Phần này dùng giọng máy vì số được tạo ngẫu nhiên.)</p><button class="btn sm pri" data-act="ipopen" data-id="__num">Luyện ngay</button></article></div>`}
@@ -122,9 +132,13 @@ function sumBody(it){const noKo=!it.segments.some(x=>x.ko);
  ${P.summaryHTML(it,{empty:"Dùng khung bên dưới để thêm."})}
  <section class="card" style="margin-top:14px"><h3>${noKo?"1. Dán bản chép lời":"Cập nhật bản chép lời"}</h3><p class="muted small">Bản chép lời tiếng Hàn từ YouTube (giữ mốc thời gian). Có mốc thời gian thì web tự chia đoạn theo đúng câu.</p>
   <textarea id="ip-trans" class="kr" rows="5" aria-label="Bản chép lời" placeholder="0:03&#10;안녕하십니까…"></textarea><div class="row" style="margin-top:8px"><button class="btn" data-act="iptrans">Lưu bản chép lời</button></div></section>
- <section class="card" style="margin-top:14px"><h3>${noKo?"2. ":""}Phần tổng hợp & bản dịch mẫu từ Claude</h3><p class="muted small">Chép lời nhắc → dán vào Claude → dán JSON trả về vào ô dưới.</p>
-  <div class="row"><button class="btn" data-act="ipsumprompt" ${noKo?"disabled":""}>Chép lời nhắc tạo tổng hợp</button></div><textarea id="ip-sumjson" rows="6" style="margin-top:8px" aria-label="JSON tổng hợp" placeholder='{"segments_vi":[…],"vocab":[…],"grammar":[…]}'></textarea>
-  <div class="row" style="margin-top:8px"><button class="btn pri" data-act="ipsumimp">Thêm vào bài</button><button class="btn" data-act="ipcopyjson">Chép JSON cả bài (để đưa lên GitHub)</button></div></section>`}
+ <section class="card" style="margin-top:14px"><h3>✨ Gemini soạn lại</h3>
+  <p class="muted small">${it.youtube?"Nghe lại video → transcript + mốc thời gian + bản dịch + tổng hợp (thay toàn bộ các đoạn hiện có).":"Bài dùng file âm thanh: Gemini chỉ nhận link YouTube, nên hãy dán bản chép lời ở trên trước."}${noKo?"":" Hoặc chỉ tạo bản dịch mẫu & tổng hợp từ transcript đang có."}</p>
+  <div class="row">${it.youtube?`<button class="btn pri" data-act="ipgemre">✨ Nghe video & soạn lại</button>`:""}<button class="btn ${it.youtube?"":"pri"}" data-act="ipsumgem" ${noKo?"disabled":""}>✨ Bản dịch mẫu & tổng hợp từ transcript</button></div>
+  ${P.gemOK()?"":`<p class="small" style="margin-bottom:0">Chưa có khóa Gemini — <button class="btn sm" data-act="gset">Cài đặt Gemini</button></p>`}</section>
+ <section class="card" style="margin-top:14px"><div class="row"><button class="btn" data-act="ipcopyjson">Chép JSON cả bài (để đưa lên GitHub)</button></div>
+  <details class="small" style="margin-top:8px"><summary>Dán JSON tổng hợp thủ công</summary><textarea id="ip-sumjson" rows="5" style="margin-top:8px" aria-label="JSON tổng hợp" placeholder='{"segments_vi":[…],"vocab":[…],"grammar":[…]}'></textarea>
+  <div class="row" style="margin-top:8px"><button class="btn" data-act="ipsumimp">Thêm vào bài</button></div></details></section>`}
 function body(it){return U.ipTab==="shadow"?shadowBody(it):U.ipTab==="sum"?sumBody(it):U.ipTab==="mark"?markBody(it):consBody(it)}
 function player(it){if(it.youtube)return `<div class="yt"><div id="ytp"></div></div>`;
  if(it.audio)return `<audio id="aup" controls preload="metadata" src="${esc(it.audio)}" style="width:100%;max-width:720px"></audio>`;
@@ -184,7 +198,7 @@ Object.assign(A,{
  ipnew:()=>{const link=$("#ni-link").value.trim();const ytv=P.ytId(link);const audio=!ytv&&isAudioURL(link)?link:"";
   if(!ytv&&!audio){toast("Cần link YouTube hoặc link file âm thanh (.mp3, .m4a…).");return}
   const segs=P.parseTranscript($("#ni-text").value);
-  const it={id:"my-i"+Date.now().toString(36),kind:$("#ni-kind").value,source:$("#ni-src").value.trim(),url:link,youtube:ytv,audio,date:today(),title:$("#ni-title").value.trim()||(segs[0]?segs[0].ko.slice(0,40)+"…":"Bài phiên dịch "+today()),segments:segs,notes:[],vocab:[],grammar:[]};
+  const it={id:"my-i"+Date.now().toString(36),kind:$("#ni-kind").value||"daily",source:$("#ni-src").value.trim(),url:link,youtube:ytv,audio,date:today(),title:$("#ni-title").value.trim()||(segs[0]?segs[0].ko.slice(0,40)+"…":"Bài phiên dịch "+today()),segments:segs,notes:[],vocab:[],grammar:[]};
   S.lib.ip.push(it);save();P.refreshLibrary();U.ip=it.id;U.ipPos=0;const hasT=timed(it).length;U.ipTab=hasT?"sum":"mark";P.render();window.scrollTo(0,0);
   toast(hasT?`Đã tạo ${hasT} đoạn theo mốc thời gian. Tiếp theo: tạo phần tổng hợp.`:"Đã tạo bài. Hãy chia đoạn khi nghe.")},
  ipimp:()=>{if(P.importItems("ip",$("#ip-json").value))P.render()},
@@ -228,7 +242,27 @@ Object.assign(A,{
  iptrans:()=>{const it=cur();const segs=P.parseTranscript($("#ip-trans").value);if(!segs.length){toast("Hãy dán bản chép lời.");return}
   if(!segs.some(s=>s.start!=null)&&timed(it).length===segs.length){segs.forEach((s,i)=>{const o=timed(it)[i];s.start=o.start;s.end=o.end})}
   it.segments=segs;save();P.refreshLibrary();reBody();toast(segs.some(s=>s.start!=null)?`Đã lưu ${segs.length} đoạn kèm mốc thời gian.`:"Đã lưu bản chép lời (chưa có mốc thời gian — dùng tab Chia đoạn).")},
- ipsumprompt:()=>P.copyText(P.summaryPrompt(cur())),
+ /* Gemini */
+ ipgem:el=>{const link=$("#ni-link").value.trim(),ytv=P.ytId(link);
+  if(!ytv){toast(isAudioURL(link)?"Gemini chỉ nhận link YouTube. Với file âm thanh hãy dùng “Tạo thủ công”.":"Hãy dán link YouTube.");return}
+  if(!P.gemOK()){P.gemSettings();return}
+  const from=parseClock($("#ni-from").value),to=parseClock($("#ni-to").value);
+  if(to!=null&&from!=null&&to<=from){toast("Thời điểm kết thúc phải sau thời điểm bắt đầu.");return}
+  const meta={title:$("#ni-title").value.trim(),kind:$("#ni-kind").value,source:$("#ni-src").value.trim()};
+  P.busy(el,"Gemini đang nghe video… (30 giây – vài phút)",async()=>{const o=await callVideo(ytv,from,to);const segs=P.gemToSegments(o,from||0);
+   if(!segs.length)throw new Error("Gemini không chép được lời nào. Thử đoạn khác hoặc video khác.");
+   const it={id:"my-i"+Date.now().toString(36),kind:meta.kind||(o.kind==="news"?"news":"daily"),source:meta.source||"YouTube",url:"https://www.youtube.com/watch?v="+ytv,youtube:ytv,audio:"",date:today(),
+    title:meta.title||String(o.title||"").trim()||"Bài phiên dịch "+today(),segments:segs,notes:arr(o.notes),vocab:arr(o.vocab),grammar:arr(o.grammar),by:"gemini"};
+   S.lib.ip.push(it);save();P.refreshLibrary();U.ip=it.id;U.ipPos=0;U.ipShow=false;U.ipTab="cons";P.render();window.scrollTo(0,0);
+   toast(`Gemini đã soạn ${segs.length} đoạn, ${it.vocab.length} từ, ${it.grammar.length} cấu trúc.`)})},
+ ipgemre:el=>{const it=cur();if(!P.gemOK()){P.gemSettings();return}
+  const go2=()=>P.busy(el,"Gemini đang nghe video…",async()=>{const T=timed(it);const from=T.length?Math.max(0,Math.floor(T[0].start)):null,to=T.length?Math.ceil(T[T.length-1].end):null;
+   const o=await callVideo(it.youtube,from,to);const segs=P.gemToSegments(o,from||0);if(!segs.length)throw new Error("Gemini không chép được lời nào.");
+   it.segments=segs;it.vocab=arr(o.vocab);it.grammar=arr(o.grammar);it.notes=arr(o.notes);st(it.id).ans={};st(it.id).marks=[];save();P.refreshLibrary();U.ipPos=0;reBody();
+   toast(`Đã soạn lại ${segs.length} đoạn.${P.isLocal(it)?"":" (Bài trong repo: thay đổi chỉ trên trình duyệt này — chép JSON để cập nhật GitHub.)"}`)});
+  if(it.segments.some(x=>x.ko))confirmDlg("Thay toàn bộ transcript, bản dịch và tổng hợp hiện có bằng bản Gemini soạn mới?",go2);else go2()},
+ ipsumgem:el=>{const it=cur();if(!P.gemOK()){P.gemSettings();return}
+  P.busy(el,"Gemini đang soạn…",async()=>{const o=await P.gemini([{text:P.summaryPrompt(it)}],{json:true});if(P.applySummary(it,JSON.stringify(o)))reBody()})},
  ipsumimp:()=>{if(P.applySummary(cur(),$("#ip-sumjson").value))reBody()},
  ipcopyjson:()=>{const it=cur();const o={...it};P.copyText(JSON.stringify(o,null,1)+",")},
  numnew:()=>{U.num.cur=genNum(U.num.type);P.speak(U.num.cur.ko);const i=$("#num-ans");i.value="";i.focus();$("#num-fb").innerHTML="";const b=$("[data-act=numagain]");if(b)b.disabled=false},
